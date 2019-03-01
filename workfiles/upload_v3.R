@@ -73,31 +73,3 @@ function(req){
 }
 
 
-# PostgreSQL offers a nice syntax sugar for this:
-#   
-#   CREATE TABLE mytable (id BIGSERIAL PRIMARY KEY, value INT);
-# 
-# which is equivalent to
-# 
-# CREATE SEQUENCE mytable_id_seq; -- table_column_'seq'
-# CREATE TABLE mytable (id BIGINT NOT NULL PRIMARY KEY DEFAULT NEXTVAL('mytable_id_seq'), value INT); -- it's not null and has a default value automatically
-
-# BIGSERIAL / bigint
-# serial ( 1 to 2147483647) <-> integer 
-
-
-CREATE TABLE gpr.gpr_trace
-(
-  id_trace integer NOT NULL DEFAULT nextval('gpr.gpr_trace_id_trace_seq'::regclass),
-  geometry geometry(Point,4326),
-  altitude numeric(5,2),
-  traces smallint[],
-  id_gpr_line integer NOT NULL,
-  traces_count integer NOT NULL,
-  CONSTRAINT gpr_trace_pkey PRIMARY KEY (id_trace),
-  CONSTRAINT gpr_trace_id_gpr_line_678a36a92952f8bb_fk_gpr_line_id_gpr_line FOREIGN KEY (id_gpr_line)
-  REFERENCES gpr.gpr_line (id_gpr_line) MATCH SIMPLE
-  ON UPDATE NO ACTION
-  ON DELETE NO ACTION
-  DEFERRABLE INITIALLY DEFERRED
-)
