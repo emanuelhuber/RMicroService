@@ -7,6 +7,25 @@ library(rpostgis)
 
 setwd("/media/huber/Seagate1TB/UNIBAS/PROJECTS/RGPR/CODE/RMicroService")
 
+# data
+
+devtools::install_github("emanuelhuber/RGPR")
+
+library(RGPR)
+gpr <- readGPR("data/DT1/XLINE00.DT1")
+xyz <- readTopo("data/DT1/XLINE00.txt", sep = "\t")
+coord(gpr) <- xyz[[1]]
+
+plot(gpr)
+plot(coord(gpr)[,1:2], asp = 1, type = "l")
+
+crs(gpr) <- CRS("+init=epsg:21781")
+
+gpr <- trProject(gpr, "+init=epsg:4326")
+
+plot(coord(gpr)[,1:2], asp = 1, type = "l")
+
+
 
 # create a connection
 # save the password that we can "hide" it as best as we can by collapsing it
@@ -53,187 +72,319 @@ ORDER BY table_schema,table_name")
 #                           own approach                                       #
 #------------------------------------------------------------------------------#
 
-
-# PostgreSQL offers a nice syntax sugar for this:
-#   
-#   CREATE TABLE mytable (id BIGSERIAL PRIMARY KEY, value INT);
-# 
-# which is equivalent to
-# 
-# CREATE SEQUENCE mytable_id_seq; -- table_column_'seq'
-# CREATE TABLE mytable (id BIGINT NOT NULL PRIMARY KEY DEFAULT NEXTVAL('mytable_id_seq'), value INT); -- it's not null and has a default value automatically
-# 
-# # BIGSERIAL / bigint
-# # serial ( 1 to 2147483647) <-> integer 
+# DEF Table on github wiki
 
 
-rpostgis::dbDrop(con,
-                 name = c("gpr", "gpr_trace"),
-                 type = "table")
+# DELETE ALL TABLES
+deleteAllTables <- function(con){
+  # # delete a sequence
+  # dbExecute(con, "DROP SEQUENCE gpr.gpr_trace_id_trace_seq")
+  # dbExecute(con, "DROP SEQUENCE gpr.gpr_line_id_line_seq")
+  if(DBI::dbExistsTable(con, c("gpr", "gpr_trace"))){
+    out <- rpostgis::dbDrop(con,
+                   name = c("gpr", "gpr_trace"),
+                   type = "table")
+    if(isTRUE(out)){
+      message("Table 'gpr.gpr_trace' deleted!")
+    }else{
+      warning("Problem by deleting table 'gpr.gpr_trace'")
+    }
+  }else{
+    message("Table'gpr.gpr_trace' does not exist!")
+  }
+  if(DBI::dbExistsTable(con, c("gpr", "gpr_line"))){
+    out <- rpostgis::dbDrop(con,
+                    name = c("gpr", "gpr_line"),
+                    type = "table")
+    if(isTRUE(out)){
+      message("Table 'gpr.gpr_line' deleted!")
+    }else{
+      warning("Problem by deleting table 'gpr.gpr_line'")
+    }
+  }else{
+    message("Table'gpr.gpr_line' does not exist!")
+  }
+}
 
-# CREATE TABLE gpr.gpr_survey
-# (
-#   id_gpr_survey integer NOT NULL DEFAULT nextval('gpr.gpr_survey_id_gpr_survey_seq'::regclass),
-#   description character varying(200) COLLATE pg_catalog."default" NOT NULL,
-#   date_creation timestamp with time zone NOT NULL,
-#   geometry geometry(MultiPolygon,4326) NOT NULL,
-#   id_standard_class integer,
-#   id_project integer,
-#   CONSTRAINT gpr_survey_pkey PRIMARY KEY (id_gpr_survey),
-#   CONSTRAINT ee276226759824f579c2274252352ffc FOREIGN KEY (id_standard_class)
-#   REFERENCES gpr.standard_class (id_standard_class) MATCH SIMPLE
-#   ON UPDATE NO ACTION
-#   ON DELETE NO ACTION
-#   DEFERRABLE INITIALLY DEFERRED,
-#   CONSTRAINT gpr_gp_id_project_6d93ebdd58ffdd76_fk_t_genm_project_id_project FOREIGN KEY (id_project)
-#   REFERENCES common.t_genm_project (id_project) MATCH SIMPLE
-#   ON UPDATE NO ACTION
-#   ON DELETE NO ACTION
-#   DEFERRABLE INITIALLY DEFERRED
-# )
+#--- DELETE ALL ROWS OF TABLES
+cleanAllTables <- function(con){
+  ## "RESTART IDENTITY" to reset associated sequence generator (serial)
+  DBI::dbExecute(con, "TRUNCATE gpr.gpr_trace, gpr.gpr_line RESTART IDENTITY")
+  # dbExecute(con, "TRUNCATE gpr.gpr_trace_float, gpr.gpr_trace, gpr.gpr_line")
+}
 
-# CREATE TABLE gpr.gpr_line
-# (
-#   id_gpr_line integer NOT NULL DEFAULT nextval('gpr.gpr_line_id_gpr_line'::regclass),
-#   description character varying(200) COLLATE pg_catalog."default",
-#   collect_date timestamp without time zone,
-#   date_creation timestamp without time zone,
-#   geometry geometry(MultiLineString,4326),
-#   id_project integer,
-#   line_num character varying(10) COLLATE pg_catalog."default",
-#   id_standard_class integer,
-#   imagefile character varying(100) COLLATE pg_catalog."default",
-#   id_gpr_survey integer,
-#   CONSTRAINT pk_gprs_gpr_line PRIMARY KEY (id_gpr_line),
-#   CONSTRAINT "D4626b0734f8197f2e008621525eca79" FOREIGN KEY (id_gpr_survey)
-#   REFERENCES gpr.gpr_survey (id_gpr_survey) MATCH SIMPLE
-#   ON UPDATE NO ACTION
-#   ON DELETE NO ACTION
-#   DEFERRABLE INITIALLY DEFERRED,
-#   CONSTRAINT "D732ccf08ca500cee1ddb1bcd336782e" FOREIGN KEY (id_standard_class)
-#   REFERENCES gpr.standard_class (id_standard_class) MATCH SIMPLE
-#   ON UPDATE NO ACTION
-#   ON DELETE NO ACTION
-#   DEFERRABLE INITIALLY DEFERRED
-# )
+createTable_gpr_line <- function(con){
+  if(!DBI::dbExistsTable(con, c("gpr", "gpr_line"))){
+    x <- SQL(paste(
+      "CREATE TABLE gpr.gpr_line(",
+      "id_line serial,",
+      'name character varying(50) COLLATE pg_catalog."default",',
+      'description character varying(200) COLLATE pg_catalog."default",',
+      "date timestamp without time zone,",
+      "PRIMARY KEY (id_line)",
+      ")", sep = "\n"))
+     
+    DBI::dbExecute(con, x)
+  }else{
+    message("Table already exists")
+  }
+}
 
-# x0 <- SQL("CREATE SEQUENCE gpr.gpr_trace_id_trace_seq")
-# 
-# 
-# x <- SQL(paste("CREATE TABLE gpr.gpr_trace(",
-#   "id_trace integer NOT NULL DEFAULT nextval('gpr.gpr_trace_id_trace_seq'::regclass),",
-#   "geometry geometry(Point,4326),",
-#   "altitude numeric(5,2),",
-#   "traces smallint[],",
-#   "id_gpr_line integer NOT NULL,",
-#   "traces_count integer NOT NULL,",
-#   "CONSTRAINT gpr_trace_pkey PRIMARY KEY (id_trace),",
-#   "CONSTRAINT gpr_trace_id_gpr_line_678a36a92952f8bb_fk_gpr_line_id_gpr_line FOREIGN KEY (id_gpr_line)",
-#   "REFERENCES gpr.gpr_line (id_gpr_line) MATCH SIMPLE",
-#   "ON UPDATE NO ACTION",
-#   "ON DELETE NO ACTION",
-#   "DEFERRABLE INITIALLY DEFERRED",
-#   ")", sep = "\n"))
-# 
-# dbExecute(con, x0)
-# dbExecute(con, x)
+createTable_gpr_trace <- function(con){
+  if(!DBI::dbExistsTable(con, c("gpr", "gpr_trace"))){
+    x <- SQL(paste(
+      "CREATE TABLE gpr.gpr_trace(",
+      "id_trace serial,",
+      "coordinates geometry(Point,4326),",
+      "elevation numeric(5,2),",
+      "traces smallint[],",
+      "id_line integer NOT NULL,",
+      "traces_count integer NOT NULL,",
+      # "CONSTRAINT gpr_trace_pkey PRIMARY KEY (id_trace),",
+      "PRIMARY KEY (id_trace),",
+      "FOREIGN KEY (id_line)",
+      "REFERENCES gpr.gpr_line (id_line) MATCH SIMPLE",
+      "ON UPDATE NO ACTION",
+      "ON DELETE NO ACTION",
+      "DEFERRABLE INITIALLY DEFERRED",
+      ")", sep = "\n"))
+    
+    DBI::dbExecute(con, x)
+  }else{
+    message("Table already exists")
+  }
+}
 
 
-x <- SQL(paste(
-  "CREATE TABLE gpr.gpr_trace(",
-   "id_trace serial,",
-   "coordinates geometry(Point,4326),",
-   "altitude numeric(5,2),",
-   "traces smallint[],",
-   "id_gpr_line integer NOT NULL,",
-   "traces_count integer NOT NULL,",
-   "CONSTRAINT gpr_trace_pkey PRIMARY KEY (id_trace),",
-   "CONSTRAINT gpr_trace_id_gpr_line FOREIGN KEY (id_gpr_line)",
-   "REFERENCES gpr.gpr_line (id_gpr_line) MATCH SIMPLE",
-   "ON UPDATE NO ACTION",
-   "ON DELETE NO ACTION",
-   "DEFERRABLE INITIALLY DEFERRED",
-   ")", sep = "\n"))
 
-# CREATE TABLE gpr.gpr_trace
-# (
-#   id_trace integer NOT NULL DEFAULT nextval('gpr.gpr_trace_id_trace_seq1'::regclass),
-#   coordinates geometry(Point,4326),
-#   altitude numeric(5,2),
-#   traces smallint[],
-#   id_gpr_line integer NOT NULL,
-#   traces_count integer NOT NULL,
-#   CONSTRAINT gpr_trace_pkey PRIMARY KEY (id_trace),
-#   CONSTRAINT gpr_trace_id_gpr_line FOREIGN KEY (id_gpr_line)
-#   REFERENCES gpr.gpr_line (id_gpr_line) MATCH SIMPLE
-#   ON UPDATE NO ACTION
-#   ON DELETE NO ACTION
-#   DEFERRABLE INITIALLY DEFERRED
-# )
-dbExecute(con, x)
+createTable_gpr_line(con)  
+createTable_gpr_trace(con)
+
+# cleanAllTables(con)
+# deleteAllTables(con)
+
+
+
 
 rpostgis::dbTableInfo(con, "gpr_trace")  
   
-# table_catalog table_schema table_name       column_name ordinal_position
-# 1  gvx  gpr   gpr_line id_gpr_line        integer
-# 2  gvx  gpr   gpr_line description        character varying 200
-# 3  gvx  gpr   gpr_line collect_date       timestamp without time zone
-# 4  gvx  gpr   gpr_line date_creation      timestamp without time zone
-# 5  gvx  gpr   gpr_line geometry           USER-DEFINED
-# 6  gvx  gpr   gpr_line id_project         integer
-# 7  gvx  gpr   gpr_line line_num           character varying 10
-# 8  gvx  gpr   gpr_line id_standard_class  integer
-# 9  gvx  gpr   gpr_line imagefile          character varying 100
-# 10 gvx  gpr   gpr_line id_gpr_survey      integer
 
-query <- paste("INSERT INTO gpr.gpr_line(",
-               "description,",
-               "id_project",
-               ")",
-               "VALUES ('NICE PROJECT',",
-               "5",
-               ");")
+#---------------- ADD GPR LINE
 
-dbExecute(con, query)
-aa <- dbGetQuery(con, "SELECT * FROM  gpr.gpr_line")
+getTimeStamp <- function(x){
+  as.character(as.POSIXlt(x@time[1], 
+                          origin = as.Date("1970-01-01")))
+}
+
+insert_gpr_line <- function(con, gpr){
+  input <- paste0("'", paste(name(gpr), 
+                             description(gpr), 
+                             getTimeStamp(gpr), sep = "', '"),
+                  "'")
+  
+  query <- DBI::SQL(paste("INSERT INTO gpr.gpr_line(",
+                     "name,",
+                     "description,",
+                     "date",
+                     ")",
+                     "VALUES (",
+                     input,
+                     ");", sep = " "))
+  
+  DBI::dbExecute(con, query)
+}
+
+get_gpr_line <- function(con){
+  dbGetQuery(con, "SELECT * FROM  gpr.gpr_line")
+}
+
+insert_gpr_line(con, gpr)
+get_gpr_line(con)
+
+#---------------- ADD GPR TRACES
 
 
-rpostgis::dbTableInfo(con, "gpr_line")  
+# try rpostgis::pgInsert  with array int...
 
 
-query <- paste("INSERT INTO gpr.gpr_trace(",
-               "coordinates,",
-               "altitude,",
-               "traces,",
-               "id_gpr_line,",
-               "traces_count",
-               ")",
-               "VALUES (",
-                "ST_GeomFromText('POINT(10.809003 54.097834)',4326),",
-                "125.23,",
-                "'{0, 10, 126, 10, -125, -15}',",
-                "3007,",
-                "111",
-                ");")
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+## COPY APPROACH
+createPoint <- function(x){
+  paste0("ST_GeomFromText('POINT(", 
+               paste(x[1:2], collapse = " "), 
+               ")', 4326)")
+}
 
-dbExecute(con, query)
+createTrace <- function(x){
+  paste0("'{",
+         paste(x, collapse = ", "),
+         "}'")
+}
 
-bb <- dbGetQuery(con, "SELECT * FROM  gpr.gpr_trace")
+xy <- apply(gpr@coord, 1, createPoint)
+elv <- gpr@coord[,3]
+trc <- apply(gpr_int, 2, createTrace)
+id_line <- DBI::dbGetQuery(con, 
+                      "SELECT currval('gpr.gpr_line_id_line_seq')")
+tr_count <- nrow(gpr)
 
+df <- data.frame(coordinates = xy,
+                 elevation = elv,
+                 traces = trc,
+                 id_line = rep(as.integer(id_line), ncol(gpr)),
+                 traces_count = rep(tr_count, ncol(gpr)))
+
+RPostgreSQL::dbSendQuery(con, "COPY gpr.gpr_trace(coordinates, elevation, traces, id_line, traces_count) FROM STDIN") 
+RPostgreSQL::postgresqlCopyInDataframe(con, df) 
+rs <- RPostgreSQL::postgresqlgetResult(con)
+#- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+
+
+
+insert_gpr_trace <- function(con, gpr){
+  id_line <- DBI::dbGetQuery(con, 
+                        "SELECT currval('gpr.gpr_line_id_line_seq')")
+  
+  gpr_int <- round(as.matrix(gpr) * 1/byte2volt())
+  
+  input <- character(ncol(gpr))
+  for(i in seq_along(gpr)){
+    input[i] <- paste0("(",
+                      paste(paste0("ST_GeomFromText('POINT(", 
+                             paste(gpr@coord[i,1:2], collapse = " "), 
+                             ")', 4326)"),
+                        gpr@coord[i,3],
+                        paste0("'{",
+                               paste(gpr_int[,i], collapse = ", "),
+                               "}'"),
+                        id_line,
+                        nrow(gpr),
+                        sep = ", "), 
+                      ")" )
+  }
+
+  query <- paste("INSERT INTO gpr.gpr_trace(",
+                 "coordinates,",
+                 "elevation,",
+                 "traces,",
+                 "id_line,",
+                 "traces_count",
+                 ")",
+                 "VALUES ",
+                 paste(input, collapse = ", "),
+                  ";")
+  DBI::dbExecute(con, query)
+  # query <- paste("INSERT INTO gpr.gpr_trace(",
+  #                "coordinates,",
+  #                "elevation,",
+  #                "traces,",
+  #                "id_line,",
+  #                "traces_count",
+  #                ")",
+  #                "VALUES (",
+  #                 "ST_GeomFromText('POINT(10.809003 54.097834)',4326),",
+  #                 "125.23,",
+  #                 "'{0, 10, 126, 10, -125, -15}',",
+  #                 "3007,",
+  #                 "111",
+  #                 ");")
+}
+
+intArrayToInt <- function(x){
+  sapply(x, function(x) as.integer(unlist(strsplit(x, ",", fixed = TRUE))))
+}
+
+get_gpr_trace_trace <- function(con){
+  bb <- DBI::dbGetQuery(con, "SELECT gpr_trace.traces FROM  gpr.gpr_trace")
+  dim(bb)
+  bb1 <- gsub("\\{|\\}", "", as.vector(bb[, 1]))
+  bb4 <- unname(sapply(bb1, intArrayToInt))
+  # bb0 <- RPostgres::dbSendQuery(con, "SELECT * FROM  gpr.gpr_trace")
+  # bb1 <- RPostgres::dbFetch(bb0)
+  # bb1[, 4] <- gsub("\\{|\\}", "", bb1[, 4])
+  # bb42 <- sapply(bb1[,4], intArrayToInt)
+  # plot3D::image2D(bb42)
+  return(bb4)
+}
+
+get_gpr_trace_coords <- function(x){
+  dd <- DBI::dbGetQuery(con, paste("SELECT ST_X(coordinates),",
+                                   "ST_Y(coordinates),",
+                                   "elevation",
+                                   "FROM gpr.gpr_trace"))
+}
+
+insert_gpr_trace(con, gpr)
+
+get_gpr_trace(con)
+
+gd <- get_gpr_trace_trace(con)
+plot3D::image2D(gd)
+
+xyz <- get_gpr_trace_coords(con)
+plot(xyz[,1:2])
+
+
+
+gprbits <- intToBits(gpr_int[,1])
+
+
+x <- "A test string"
+(y <- charToRaw(x))
+
+
+################################################################################
+aa <- rpostgis::pgGetGeom(con, name = c("gpr","gpr_trace"), geom = "coordinates", 
+          gid = "id_trace", other.cols = FALSE)
+dim(aa)
+
+class(aa)
+
+plot(aa)
+
+
+
+################################################################################
+
+
+bb <- DBI::dbGetQuery(con, "SELECT * FROM  gpr.gpr_trace")
+dim(bb)
+bb[, 4] <- gsub("\\{|\\}", "", bb[, 4])
+bb4 <- sapply(bb[,4], intArrayToInt)
+plot3D::image2D(bb4)
+bb[,2]
+
+bb0 <- RPostgres::dbSendQuery(con, "SELECT * FROM  gpr.gpr_trace")
+bb1 <- RPostgres::dbFetch(bb0)
+bb1[, 4] <- gsub("\\{|\\}", "", bb1[, 4])
+bb42 <- sapply(bb1[,4], intArrayToInt)
+plot3D::image2D(bb42)
+
+
+bb4 - as.integer(gpr_int[,i])
 
 # last key id:
-id_trace <- dbGetQuery(con, 
-                       "SELECT currval(pg_get_serial_sequence('gpr.gpr_trace', 'id_trace'))")
-id_trace <- dbGetQuery(con, 
-                       "SELECT currval(pg_get_serial_sequence('gpr.gpr_trace', 'id_trace'))")
+id_line <- dbGetQuery(con, 
+                      "SELECT lastval('gpr.gpr_line_id_gpr_line')")
+
+
 
 id_line <- dbGetQuery(con, 
-                       "SELECT currval('gpr.gpr_line_id_gpr_line')")
+                       "SELECT currval(pg_get_serial_sequence('gpr.gpr_line', 'id_line'))")
 
 
 
+id_trace <- dbGetQuery(con, 
+                       "SELECT currval(pg_get_serial_sequence('gpr.gpr_trace', 'id_trace_seq'))")
 
 
+id_line <- dbGetQuery(con, 
+                       "SELECT currval('gpr.gpr_trace_id_trace_seq')")
+
+
+
+id_line <- dbGetQuery(con, 
+                      "SELECT last_value FROM gpr.gpr_line")
 
 con <- dbConnect(RSQLite::SQLite(), ":memory:")
 
